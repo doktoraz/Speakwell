@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SpeakWell — Presentation Coach</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🎤 SpeakWell</div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="learn">Learn</button>
+      <button class="tab-btn" data-tab="practice">Practice &amp; Record</button>
+      <button class="tab-btn" data-tab="history">My Progress</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- LEARN TAB -->
+    <section id="learn" class="tab-panel active">
+      <h1>Presentation fundamentals</h1>
+      <p class="subtitle">Five short lessons. Check them off as you go, then head to Practice to try them out.</p>
+      <div id="lesson-list" class="lesson-grid"></div>
+    </section>
+
+    <!-- PRACTICE TAB -->
+    <section id="practice" class="tab-panel">
+      <h1>Record your presentation</h1>
+
+      <div class="practice-layout">
+        <div class="camera-col">
+          <div class="video-wrap">
+            <video id="liveVideo" autoplay muted playsinline></video>
+            <video id="playbackVideo" playsinline controls style="display:none"></video>
+            <canvas id="overlay"></canvas>
+            <div id="recBadge" class="rec-badge" style="display:none">● REC <span id="recTimer">0:00</span></div>
+          </div>
+
+          <div class="controls">
+            <button id="enableCamBtn" class="btn primary">Enable Camera &amp; Mic</button>
+            <button id="startBtn" class="btn record" disabled>Start Recording</button>
+            <button id="stopBtn" class="btn stop" disabled>Stop</button>
+            <button id="retryBtn" class="btn ghost" style="display:none">Record Again</button>
+          </div>
+          <p id="camStatus" class="status-text"></p>
+        </div>
+
+        <div class="prompt-col">
+          <label for="topicSelect"><strong>Pick a practice prompt</strong></label>
+          <select id="topicSelect"></select>
+          <div id="promptCard" class="prompt-card"></div>
+
+          <div id="liveMetrics" class="live-metrics" style="display:none">
+            <div><span id="liveWpm">0</span><small>words/min</small></div>
+            <div><span id="liveFillers">0</span><small>filler words</small></div>
+            <div><span id="liveEye">0%</span><small>facing camera</small></div>
+            <div><span id="liveExpression">—</span><small>expression</small></div>
+            <div><span id="liveVolume">—</span><small>volume</small></div>
+          </div>
+
+          <div id="transcriptBox" class="transcript-box" style="display:none">
+            <strong>Live transcript</strong>
+            <div id="transcriptText"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="appraisalArea"></div>
+    </section>
+
+    <!-- HISTORY TAB -->
+    <section id="history" class="tab-panel">
+      <h1>My Progress</h1>
+      <p class="subtitle">Every appraisal you generate is saved on this device.</p>
+      <div id="historyTable"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Runs locally in your browser — video never leaves your machine except the transcript + metrics sent for appraisal.</span>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
