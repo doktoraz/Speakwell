@@ -34,7 +34,7 @@ def rule_based_feedback(m):
     engaged = m.get("engagedExpressionPct")
     dominant_expr = m.get("dominantExpression")
     volume_variation = m.get("volumeVariationDb")
-    volume_mean_db = m.get("volumeMeanDb")
+    volume_above_floor_db = m.get("volumeAboveFloorDb")
     tone_variation = m.get("toneVariationSemitones")
 
     pacing_score = clamp(round(100 - abs(wpm - 140) * 1.6))
@@ -59,19 +59,25 @@ def rule_based_feedback(m):
     # rather than assuming some baseline variation is always present.
     if tone_variation is not None:
         scores["tone"] = clamp(round(100 - abs(tone_variation - 6) * 9)) if tone_variation >= 3.5 else clamp(round(tone_variation / 3.5 * 55))
-    # volume_variation is now a standard deviation in dB (not a percentage) — typical
-    # flat/monotone delivery measures under ~3dB, natural dynamic delivery ~4-9dB.
+    # volume_variation is the dB range between your loudest and softest voiced moments
+    # (10th-90th percentile). Unlike tone/pace, a wide deliberate swing here is a good
+    # thing, not "erratic" — going from a near-whisper to a projected line is exactly
+    # the skill being measured, so this rewards more range monotonically rather than
+    # penalizing anything above some assumed "ideal" midpoint.
     if volume_variation is not None:
-        scores["volume"] = clamp(round(100 - abs(volume_variation - 6) * 11)) if volume_variation >= 3 else clamp(round(volume_variation / 3 * 55))
+        scores["volume"] = clamp(round(volume_variation * 100 / 25))
 
     # Energy: how lively/animated the delivery felt overall — distinct from the
     # variation scores above (which measure modulation/dynamic range). This looks at
     # absolute levels instead: how loud, how brisk, how facially animated, on average.
     # You can have good variation but still read as low-energy overall (soft, slow,
     # flat affect punctuated by rare peaks), or vice versa.
+    # Loudness is measured relative to this user's own calibrated mic/room noise floor
+    # (not a fixed dBFS number) — raw mic gain varies by 20-30dB across devices for the
+    # same real speaking volume, so an absolute threshold can't generalize.
     energy_parts = []
-    if volume_mean_db is not None:
-        energy_parts.append(clamp(round((volume_mean_db + 40) * 3.6)))
+    if volume_above_floor_db is not None:
+        energy_parts.append(clamp(round(volume_above_floor_db * 2.2)))
     if wpm:
         energy_parts.append(clamp(round((wpm - 80) * 1.0)))
     if engaged is not None:
@@ -136,13 +142,11 @@ def rule_based_feedback(m):
             tips.append("Practice controlled emphasis: vary pitch on purpose for 1-2 words per sentence, not constantly.")
 
     if volume_variation is not None:
-        if 3 <= volume_variation <= 10:
-            strengths.append(f"Good vocal dynamics (~{volume_variation}dB range) — you varied your volume instead of speaking in a flat monotone.")
-        elif volume_variation < 3:
-            improvements.append(f"Your volume stayed fairly constant throughout (~{volume_variation}dB range). Get louder or softer to emphasize key points.")
-            tips.append("Practice dropping your volume slightly on one important phrase to draw the listener in.")
+        if volume_variation >= 8:
+            strengths.append(f"Good vocal dynamics — about {volume_variation}dB between your loudest and softest moments, instead of a flat monotone.")
         else:
-            improvements.append(f"Your volume varied a lot (~{volume_variation}dB range), which can read as inconsistent — check mic distance and projection.")
+            improvements.append(f"Your volume stayed fairly constant throughout (~{volume_variation}dB between loudest and softest). Get louder or softer to emphasize key points.")
+            tips.append("Practice dropping your volume slightly on one important phrase, then projecting on the next, to draw the listener in.")
 
     if energy_score is not None:
         if energy_score >= 70:
@@ -192,7 +196,8 @@ Long pauses (>3s): {m.get('pauseCount')}
 Eye contact / facing camera: {m.get('eyeContactPct')}%
 Facial expression while speaking: dominant expression was "{m.get('dominantExpression')}", smiled ~{m.get('smilePct')}% of the time, expression was non-neutral (animated/engaged) ~{m.get('engagedExpressionPct')}% of the time
 Vocal tone variation: pitch ranged about {m.get('toneVariationSemitones')} semitones (mean pitch ~{m.get('meanPitchHz')}Hz) — low means monotone, high means erratic
-Volume variation: loudness standard deviation ~{m.get('volumeVariationDb')}dB (mean loudness {m.get('volumeMeanDb')}dBFS) — low means flat/constant volume, higher means more dynamic
+Volume variation: {m.get('volumeVariationDb')}dB range between loudest and softest voiced moments — low means flat/constant volume, higher means more dynamic (no upper penalty; wide deliberate swings are good)
+Volume level relative to this speaker's own ambient room/mic noise floor: {m.get('volumeAboveFloorDb')}dB above floor — higher means louder/more projected, this drives perceived energy
 Transcript:
 \"\"\"{m.get('transcript', '')[:4000]}\"\"\"
 

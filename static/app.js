@@ -137,6 +137,7 @@ let faceLoopHandle = null;
 let recognizer = null;
 let audioCtx = null;
 let analyser = null;
+let micNoiseFloorDb = null;
 
 let recState = {
   recording: false,
@@ -191,6 +192,7 @@ async function enableCamera() {
     camStatus.textContent = "Camera ready. Pick a prompt, then hit Start Recording.";
     loadFaceModel();
     setupAudioAnalysis();
+    await calibrateMicNoiseFloor();
   } catch (err) {
     camStatus.textContent = "Couldn't access camera/mic: " + err.message;
   }
@@ -207,6 +209,33 @@ function setupAudioAnalysis() {
     analyser = null;
     console.warn("Web Audio analysis unavailable; tone/volume tracking disabled.", err);
   }
+}
+
+// Absolute dB thresholds don't generalize across devices — a quiet laptop mic and a
+// loud external one can differ by 20-30dB for the exact same speaking volume. Instead,
+// measure this user's own ambient room/mic noise floor right after they enable the
+// camera, and score everything else (voice detection, energy) relative to that baseline.
+async function calibrateMicNoiseFloor() {
+  if (!analyser) {
+    micNoiseFloorDb = -50;
+    return;
+  }
+  const prevStatus = camStatus.textContent;
+  camStatus.textContent = "Calibrating microphone — stay quiet for a second...";
+  const buf = new Float32Array(analyser.fftSize);
+  const samples = [];
+  const start = Date.now();
+  while (Date.now() - start < 700) {
+    analyser.getFloatTimeDomainData(buf);
+    let sumSquares = 0;
+    for (let i = 0; i < buf.length; i++) sumSquares += buf[i] * buf[i];
+    const rms = Math.sqrt(sumSquares / buf.length);
+    samples.push(20 * Math.log10(Math.max(rms, 1e-6)));
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  samples.sort((a, b) => a - b);
+  micNoiseFloorDb = percentile(samples, 0.5);
+  camStatus.textContent = prevStatus;
 }
 
 // Autocorrelation-based pitch (fundamental frequency) detector.
@@ -436,7 +465,11 @@ function startRecording() {
     liveWpmEl.textContent = wpm;
   }, 500);
 
-  const VOICED_RMS = 0.02; // below this, treat the frame as silence/pause, not speech
+  // How many dB above this user's own calibrated ambient noise floor counts as
+  // "speaking" — device-relative, not a fixed absolute level (mic gain varies by
+  // 20-30dB across devices for the same real speaking volume).
+  const VOICE_MARGIN_DB = 10;
+  const noiseFloor = micNoiseFloorDb === null ? -50 : micNoiseFloorDb;
   if (analyser) {
     const buf = new Float32Array(analyser.fftSize);
     recState.audioSampleHandle = setInterval(() => {
@@ -451,7 +484,7 @@ function startRecording() {
       const dbfs = 20 * Math.log10(Math.max(rms, 1e-6));
       liveVolumeEl.textContent = dbfs > -20 ? "Loud" : dbfs > -34 ? "Good" : "Quiet";
 
-      const isVoiced = rms > VOICED_RMS;
+      const isVoiced = dbfs > noiseFloor + VOICE_MARGIN_DB;
       // Only feed variation stats from frames where the speaker is actually talking —
       // otherwise the natural silence between sentences/breaths gets counted as
       // "volume variation", making even flat delivery look dynamic.
@@ -576,14 +609,20 @@ function computeMetrics() {
     ? Object.entries(recState.dominantCounts).sort((a, b) => b[1] - a[1])[0][0]
     : null;
 
-  // Volume variation: standard deviation in dB of sampled loudness during voiced frames.
-  // dB is already a log/ratio scale, so raw stddev (not coefficient of variation) is the
-  // right measure of dynamic range here — dividing by the mean would be meaningless
-  // (and unstable) once values can be negative.
-  let volumeMeanDb = null, volumeVariationDb = null;
+  // Volume variation: dB range between your loudest and softest voiced moments (10th to
+  // 90th percentile, robust to a single stray spike). This directly captures "did you
+  // deliberately go from soft to loud" — a stddev-vs-fixed-ideal measure would instead
+  // penalize exactly that kind of large, intentional swing as "too erratic".
+  // volumeAboveFloorDb (mean loudness relative to this user's own calibrated ambient
+  // noise floor) drives the energy score — absolute dBFS isn't comparable across
+  // devices, since mic gain alone can differ by 20-30dB for the same real volume.
+  let volumeMeanDb = null, volumeVariationDb = null, volumeAboveFloorDb = null;
   if (recState.volumeSamples.length >= 4) {
+    const sortedVol = [...recState.volumeSamples].sort((a, b) => a - b);
     volumeMeanDb = Math.round(mean(recState.volumeSamples));
-    volumeVariationDb = +stddev(recState.volumeSamples).toFixed(1);
+    volumeVariationDb = +(percentile(sortedVol, 0.9) - percentile(sortedVol, 0.1)).toFixed(1);
+    const floor = micNoiseFloorDb === null ? -50 : micNoiseFloorDb;
+    volumeAboveFloorDb = +(volumeMeanDb - floor).toFixed(1);
   }
 
   // Tone variation: pitch range in semitones between the 10th/90th percentile
@@ -614,6 +653,7 @@ function computeMetrics() {
     dominantExpression,
     volumeMeanDb,
     volumeVariationDb,
+    volumeAboveFloorDb,
     toneVariationSemitones,
     meanPitchHz,
   };
@@ -704,6 +744,7 @@ function saveHistory(data, metrics) {
     dominantExpression: metrics.dominantExpression,
     volumeMeanDb: metrics.volumeMeanDb,
     volumeVariationDb: metrics.volumeVariationDb,
+    volumeAboveFloorDb: metrics.volumeAboveFloorDb,
     toneVariationSemitones: metrics.toneVariationSemitones,
     meanPitchHz: metrics.meanPitchHz,
   });
@@ -749,7 +790,8 @@ function renderHistory() {
           <div><div class="label">Smile</div><div class="val">${fmt(h.smilePct, "%")}</div></div>
           <div><div class="label">Engaged expression</div><div class="val">${fmt(h.engagedExpressionPct, "%")}</div></div>
           <div><div class="label">Volume level</div><div class="val">${fmt(h.volumeMeanDb, "dBFS")}</div></div>
-          <div><div class="label">Volume variation</div><div class="val">${fmt(h.volumeVariationDb, "dB")}</div></div>
+          <div><div class="label">Volume above room noise</div><div class="val">${fmt(h.volumeAboveFloorDb, "dB")}</div></div>
+          <div><div class="label">Volume variation (range)</div><div class="val">${fmt(h.volumeVariationDb, "dB")}</div></div>
           <div><div class="label">Tone variation</div><div class="val">${fmt(h.toneVariationSemitones, " semitones")}</div></div>
           <div><div class="label">Mean pitch</div><div class="val">${fmt(h.meanPitchHz, "Hz")}</div></div>
         </div>
