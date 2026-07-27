@@ -24,6 +24,20 @@ def clamp(v, lo=0, hi=100):
     return max(lo, min(hi, v))
 
 
+def pacing_score_fn(wpm):
+    # Flat 100 across a comfortable 120-160wpm "ideal" band, then a gentle linear
+    # taper outside it (100 points over an 80wpm falloff) rather than a steep single
+    # slope — a steep slope hits a hard 0 floor for anything much slower/faster than
+    # ideal, making merely-slow (e.g. 77wpm) score identically to silence.
+    if wpm <= 0:
+        return 0
+    if 120 <= wpm <= 160:
+        return 100
+    if wpm < 120:
+        return clamp(round(100 - (120 - wpm) * (100 / 80)))
+    return clamp(round(100 - (wpm - 160) * (100 / 80)))
+
+
 def rule_based_feedback(m):
     wpm = m.get("wpm", 0)
     filler_rate = m.get("fillerRatePer100", 0)
@@ -37,7 +51,7 @@ def rule_based_feedback(m):
     volume_above_floor_db = m.get("volumeAboveFloorDb")
     tone_variation = m.get("toneVariationSemitones")
 
-    pacing_score = clamp(round(100 - abs(wpm - 140) * 1.6))
+    pacing_score = pacing_score_fn(wpm)
     filler_score = clamp(round(100 - filler_rate * 12))
     scores = {"pacing": pacing_score, "fillerWords": filler_score}
 
