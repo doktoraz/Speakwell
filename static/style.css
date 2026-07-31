@@ -173,6 +173,8 @@ h1 { font-size: 1.5rem; margin-bottom: 4px; }
 .hc-arrow { color: var(--text-dim); width: 16px; text-align: center; flex-shrink: 0; }
 .history-chips { margin-top: 12px; }
 .history-details { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.history-video-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.history-video-player { display: block; width: 100%; max-width: 420px; margin-top: 10px; border-radius: 10px; }
 .empty-state { color: var(--text-dim); text-align: center; padding: 40px 0; }
 
 footer { text-align: center; color: var(--text-dim); font-size: 0.78rem; padding: 20px; }

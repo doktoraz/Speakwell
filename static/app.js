@@ -1,3 +1,65 @@
+/* ---------- Local video storage (IndexedDB) ----------
+   Recorded video never leaves the browser — stored here so past takes can be replayed
+   from the Progress page, keyed to the same entry as its metrics/scores. localStorage
+   can't hold blobs of this size; IndexedDB is built for exactly this. */
+const VIDEO_DB_NAME = "speakwell_videos";
+const VIDEO_STORE = "recordings";
+const MAX_STORED_VIDEOS = 15;
+
+function openVideoDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(VIDEO_DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(VIDEO_STORE, { keyPath: "id" });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveVideoBlob(id, blob) {
+  if (!blob) return;
+  try {
+    const db = await openVideoDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(VIDEO_STORE, "readwrite");
+      tx.objectStore(VIDEO_STORE).put({ id, blob, savedAt: Date.now() });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    await pruneOldVideos(db);
+  } catch (e) {
+    console.warn("Couldn't save recording locally (playback for this take won't be available):", e);
+  }
+}
+
+async function pruneOldVideos(db) {
+  const store = db.transaction(VIDEO_STORE, "readwrite").objectStore(VIDEO_STORE);
+  const all = await new Promise((resolve, reject) => {
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  if (all.length > MAX_STORED_VIDEOS) {
+    all.sort((a, b) => a.savedAt - b.savedAt);
+    const delStore = db.transaction(VIDEO_STORE, "readwrite").objectStore(VIDEO_STORE);
+    all.slice(0, all.length - MAX_STORED_VIDEOS).forEach((v) => delStore.delete(v.id));
+  }
+}
+
+async function getVideoBlob(id) {
+  if (!id) return null;
+  try {
+    const db = await openVideoDb();
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction(VIDEO_STORE, "readonly").objectStore(VIDEO_STORE).get(id);
+      req.onsuccess = () => resolve(req.result ? req.result.blob : null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.warn("Couldn't load saved recording:", e);
+    return null;
+  }
+}
+
 /* ---------- Tab switching ---------- */
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -437,6 +499,7 @@ function startRecording() {
     volumeSamples: [],
     pitchSamples: [],
     audioSampleHandle: null,
+    videoBlob: null,
   };
   transcriptText.textContent = "";
   transcriptBox.style.display = "block";
@@ -570,6 +633,7 @@ function stopRecording() {
     playbackVideo.style.display = "block";
     playbackVideo.src = url;
     retryBtn.style.display = "inline-block";
+    recState.videoBlob = blob;
     showAppraiseButton();
   };
   mediaRecorder.stop();
@@ -727,6 +791,7 @@ const SCORE_LABELS = {
 
 function saveHistory(data, metrics) {
   const hist = JSON.parse(localStorage.getItem("speakwell_history") || "[]");
+  const videoId = recState.videoBlob ? `rec-${Date.now()}-${Math.random().toString(36).slice(2)}` : null;
   hist.unshift({
     date: new Date().toISOString(),
     topic: metrics.topic,
@@ -747,8 +812,10 @@ function saveHistory(data, metrics) {
     volumeAboveFloorDb: metrics.volumeAboveFloorDb,
     toneVariationSemitones: metrics.toneVariationSemitones,
     meanPitchHz: metrics.meanPitchHz,
+    videoId,
   });
   localStorage.setItem("speakwell_history", JSON.stringify(hist.slice(0, 50)));
+  if (videoId) saveVideoBlob(videoId, recState.videoBlob);
 }
 
 function fmt(val, suffix = "") {
@@ -795,6 +862,11 @@ function renderHistory() {
           <div><div class="label">Tone variation</div><div class="val">${fmt(h.toneVariationSemitones, " semitones")}</div></div>
           <div><div class="label">Mean pitch</div><div class="val">${fmt(h.meanPitchHz, "Hz")}</div></div>
         </div>
+        ${h.videoId ? `
+        <div class="history-video-row">
+          <button class="btn ghost" data-play-video="${i}">▶ Watch recording</button>
+          <video class="history-video-player" id="hist-video-${i}" style="display:none" controls></video>
+        </div>` : ""}
       </div>`;
     })
     .join("");
@@ -805,6 +877,28 @@ function renderHistory() {
       const isOpen = details.style.display !== "none";
       details.style.display = isOpen ? "none" : "grid";
       el.querySelector(".hc-arrow").textContent = isOpen ? "▾" : "▴";
+    });
+  });
+
+  wrap.querySelectorAll("[data-play-video]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const idx = btn.dataset.playVideo;
+      const videoEl = document.getElementById(`hist-video-${idx}`);
+      if (videoEl.style.display !== "none") {
+        videoEl.pause();
+        videoEl.style.display = "none";
+        btn.textContent = "▶ Watch recording";
+        return;
+      }
+      btn.textContent = "Loading...";
+      const blob = await getVideoBlob(hist[idx].videoId);
+      if (!blob) {
+        btn.textContent = "Recording unavailable";
+        return;
+      }
+      videoEl.src = URL.createObjectURL(blob);
+      videoEl.style.display = "block";
+      btn.textContent = "▲ Hide recording";
     });
   });
 }
