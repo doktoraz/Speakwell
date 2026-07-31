@@ -531,7 +531,12 @@ function startRecording() {
   liveVolumeEl.textContent = "—";
   appraisalArea.innerHTML = "";
 
-  const mimeCandidates = ["video/webm;codecs=vp8,opus", "video/webm"];
+  // Safari doesn't support webm at all — MediaRecorder silently falls back to its own
+  // default (mp4) when none of these match, which is exactly what we want here; the
+  // actual negotiated type is read back from mediaRecorder.mimeType after construction
+  // rather than assumed, since hardcoding "video/webm" on the resulting Blob would
+  // mislabel real mp4 bytes and break playback.
+  const mimeCandidates = ["video/webm;codecs=vp8,opus", "video/webm", "video/mp4"];
   const mime = mimeCandidates.find((m) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m));
   mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime } : undefined);
   mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
@@ -647,7 +652,8 @@ function stopRecording() {
   if (recognizer) { try { recognizer.stop(); } catch (e) {} }
 
   mediaRecorder.onstop = () => {
-    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    const actualMime = mediaRecorder.mimeType || "video/webm";
+    const blob = new Blob(recordedChunks, { type: actualMime });
     console.log("[SpeakWell recording diag]", {
       chunkCount: recordedChunks.length,
       chunkSizes: recordedChunks.map((c) => c.size),
