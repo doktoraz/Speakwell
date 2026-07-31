@@ -455,10 +455,30 @@ function runFaceLoop() {
       return;
     }
     try {
-      let query = faceapi.detectSingleFace(liveVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }));
-      if (landmarkModelReady) query = query.withFaceLandmarks(true);
-      if (expressionModelReady) query = query.withFaceExpressions();
-      const det = await query;
+      // Base face box first, on its own short timeout — this alone is enough for eye
+      // contact + drawing the box. Landmarks/expressions are fetched separately below
+      // so that a hang in either of those (observed on some browsers) can't also take
+      // down the basic detection that doesn't depend on them.
+      const baseDet = await withTimeout(
+        faceapi.detectSingleFace(liveVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 })),
+        2500,
+        "baseDetect"
+      );
+
+      let det = baseDet;
+      if (baseDet && (landmarkModelReady || expressionModelReady)) {
+        try {
+          let fullQuery = faceapi.detectSingleFace(liveVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }));
+          if (landmarkModelReady) fullQuery = fullQuery.withFaceLandmarks(true);
+          if (expressionModelReady) fullQuery = fullQuery.withFaceExpressions();
+          det = await withTimeout(fullQuery, 2500, "fullDetect");
+        } catch (fullErr) {
+          if (Date.now() - lastDiagLog > 2000) {
+            console.warn("[SpeakWell face-detect diag] landmarks/expressions failed or timed out, using box-only:", fullErr);
+          }
+          det = baseDet; // still have a usable box even if this part failed
+        }
+      }
 
       // Throttled diagnostic: face detection has been silently failing for some users
       // on some devices with no visible error, so surface enough to actually see why.
@@ -470,6 +490,8 @@ function runFaceLoop() {
           videoHeight: liveVideo.videoHeight,
           videoReadyState: liveVideo.readyState,
           faceFound: !!det,
+          hasLandmarks: !!(det && det.landmarks),
+          hasExpressions: !!(det && det.expressions),
           detectionScore: det ? (det.detection ? det.detection.score : det.score) : null,
         });
       }
