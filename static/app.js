@@ -459,9 +459,13 @@ function runFaceLoop() {
       // contact + drawing the box. Landmarks/expressions are fetched separately below
       // so that a hang in either of those (observed on some browsers) can't also take
       // down the basic detection that doesn't depend on them.
+      // 6s (not 2.5s) — Safari's first WebGL/TF.js inference call after model load can
+      // genuinely take several seconds to warm up the GPU pipeline before settling into
+      // fast, reliable detections; a too-short timeout here just means unnecessary
+      // failed-then-retried cycles during that one-time startup window.
       const baseDet = await withTimeout(
         faceapi.detectSingleFace(liveVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 })),
-        2500,
+        6000,
         "baseDetect"
       );
 
@@ -471,7 +475,7 @@ function runFaceLoop() {
           let fullQuery = faceapi.detectSingleFace(liveVideo, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }));
           if (landmarkModelReady) fullQuery = fullQuery.withFaceLandmarks(true);
           if (expressionModelReady) fullQuery = fullQuery.withFaceExpressions();
-          det = await withTimeout(fullQuery, 2500, "fullDetect");
+          det = await withTimeout(fullQuery, 6000, "fullDetect");
         } catch (fullErr) {
           if (Date.now() - lastDiagLog > 2000) {
             console.warn("[SpeakWell face-detect diag] landmarks/expressions failed or timed out, using box-only:", fullErr);
