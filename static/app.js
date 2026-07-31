@@ -360,35 +360,50 @@ function autoCorrelate(buf, sampleRate) {
   return T0 > 0 ? sampleRate / T0 : -1;
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms — likely hung, not a normal failure`)), ms)),
+  ]);
+}
+
 async function loadFaceModel() {
+  console.log("[SpeakWell face-detect diag] loadFaceModel() entered, typeof faceapi:", typeof faceapi);
   // npm's published face-api.js package ships no model weights; the GitHub-hosted
   // copy via jsdelivr's /gh/ endpoint is the one that actually resolves.
   const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights";
   try {
-    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    console.log("[SpeakWell face-detect diag] starting tinyFaceDetector load...");
+    await withTimeout(faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), 8000, "tinyFaceDetector");
+    console.log("[SpeakWell face-detect diag] tinyFaceDetector loaded OK");
     faceModelReady = true;
     camStatus.textContent = "Camera ready. Pick a prompt, then hit Start Recording.";
   } catch (err) {
     faceModelReady = false;
     camStatus.textContent = "Camera ready, but face tracking failed to load (eye contact/expression won't be measured).";
-    console.warn("tinyFaceDetector failed to load; eye-contact tracking disabled.", err);
+    console.warn("[SpeakWell face-detect diag] tinyFaceDetector FAILED to load:", err);
     runFaceLoop();
     return;
   }
   try {
-    await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
+    console.log("[SpeakWell face-detect diag] starting faceExpressionNet load...");
+    await withTimeout(faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL), 8000, "faceExpressionNet");
+    console.log("[SpeakWell face-detect diag] faceExpressionNet loaded OK");
     expressionModelReady = true;
   } catch (err) {
     expressionModelReady = false;
-    console.warn("faceExpressionNet failed to load; expression tracking disabled.", err);
+    console.warn("[SpeakWell face-detect diag] faceExpressionNet FAILED to load:", err);
   }
   try {
-    await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+    console.log("[SpeakWell face-detect diag] starting faceLandmark68TinyNet load...");
+    await withTimeout(faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL), 8000, "faceLandmark68TinyNet");
+    console.log("[SpeakWell face-detect diag] faceLandmark68TinyNet loaded OK");
     landmarkModelReady = true;
   } catch (err) {
     landmarkModelReady = false;
-    console.warn("faceLandmark68TinyNet failed to load; falling back to box-centered eye contact heuristic only.", err);
+    console.warn("[SpeakWell face-detect diag] faceLandmark68TinyNet FAILED to load:", err);
   }
+  console.log("[SpeakWell face-detect diag] calling runFaceLoop()");
   runFaceLoop();
 }
 
@@ -422,13 +437,19 @@ function estimateGazeAtCamera(landmarks) {
 }
 
 function runFaceLoop() {
+  console.log("[SpeakWell face-detect diag] runFaceLoop() started, faceModelReady:", faceModelReady);
   const w = liveVideo.clientWidth, h = liveVideo.clientHeight;
   overlay.width = w;
   overlay.height = h;
   const ctx = overlay.getContext("2d");
 
   let lastDiagLog = 0;
+  let loggedFirstTick = false;
   async function tick() {
+    if (!loggedFirstTick) {
+      loggedFirstTick = true;
+      console.log("[SpeakWell face-detect diag] tick loop is running, faceModelReady:", faceModelReady, "liveVideo display:", liveVideo.style.display);
+    }
     if (!faceModelReady || liveVideo.style.display === "none") {
       faceLoopHandle = requestAnimationFrame(tick);
       return;
