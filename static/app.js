@@ -214,9 +214,7 @@ let recState = {
   faceCentered: 0,
   faceAvailable: false,
   expressionSamples: 0,
-  happySum: 0,
-  neutralSum: 0,
-  dominantCounts: {},
+  expressionSums: {},
   volumeSamples: [],
   pitchSamples: [],
   audioSampleHandle: null,
@@ -528,11 +526,15 @@ function runFaceLoop() {
 
         if (det && det.expressions) {
           recState.expressionSamples++;
-          recState.happySum += det.expressions.happy;
-          recState.neutralSum += det.expressions.neutral;
+          // Sum raw probabilities per category rather than counting discrete per-frame
+          // "winners" — a session-long average is much more resistant to the classifier
+          // occasionally misreading a couple of frames than a plurality vote is, since
+          // a few noisy frames can flip a vote-count winner but barely move an average.
+          for (const [key, val] of Object.entries(det.expressions)) {
+            recState.expressionSums[key] = (recState.expressionSums[key] || 0) + val;
+          }
           const dominant = Object.entries(det.expressions).sort((a, b) => b[1] - a[1])[0][0];
-          recState.dominantCounts[dominant] = (recState.dominantCounts[dominant] || 0) + 1;
-          liveExpressionEl.textContent = dominant;
+          liveExpressionEl.textContent = dominant; // live display can be a bit noisy, that's fine for a real-time indicator
         }
       }
     } catch (e) {
@@ -560,9 +562,7 @@ function startRecording() {
     faceCentered: 0,
     faceAvailable: false,
     expressionSamples: 0,
-    happySum: 0,
-    neutralSum: 0,
-    dominantCounts: {},
+    expressionSums: {},
     volumeSamples: [],
     pitchSamples: [],
     audioSampleHandle: null,
@@ -743,13 +743,15 @@ function computeMetrics() {
     : null;
 
   const hasExpressions = recState.expressionSamples > 0;
-  const smilePct = hasExpressions ? Math.round((100 * recState.happySum) / recState.expressionSamples) : null;
-  const neutralCount = recState.dominantCounts.neutral || 0;
-  const engagedExpressionPct = hasExpressions
-    ? Math.round(100 * (1 - neutralCount / recState.expressionSamples))
+  const smilePct = hasExpressions
+    ? Math.round((100 * (recState.expressionSums.happy || 0)) / recState.expressionSamples)
     : null;
+  const neutralAvg = hasExpressions ? (recState.expressionSums.neutral || 0) / recState.expressionSamples : 0;
+  const engagedExpressionPct = hasExpressions ? Math.round(100 * (1 - neutralAvg)) : null;
+  // Dominant = highest session-average probability, not most frequent per-frame winner —
+  // averaging is far less sensitive to a handful of misread frames than a vote count is.
   const dominantExpression = hasExpressions
-    ? Object.entries(recState.dominantCounts).sort((a, b) => b[1] - a[1])[0][0]
+    ? Object.entries(recState.expressionSums).sort((a, b) => b[1] - a[1])[0][0]
     : null;
 
   // Volume variation: dB range between your loudest and softest voiced moments (10th to
