@@ -26,8 +26,9 @@ async function saveVideoBlob(id, blob) {
       tx.onerror = () => reject(tx.error);
     });
     await pruneOldVideos(db);
+    console.log("[SpeakWell recording diag] saved video to IndexedDB", { id, size: blob.size });
   } catch (e) {
-    console.warn("Couldn't save recording locally (playback for this take won't be available):", e);
+    console.warn("[SpeakWell recording diag] video save FAILED:", e);
   }
 }
 
@@ -426,6 +427,7 @@ function runFaceLoop() {
   overlay.height = h;
   const ctx = overlay.getContext("2d");
 
+  let lastDiagLog = 0;
   async function tick() {
     if (!faceModelReady || liveVideo.style.display === "none") {
       faceLoopHandle = requestAnimationFrame(tick);
@@ -436,6 +438,21 @@ function runFaceLoop() {
       if (landmarkModelReady) query = query.withFaceLandmarks(true);
       if (expressionModelReady) query = query.withFaceExpressions();
       const det = await query;
+
+      // Throttled diagnostic: face detection has been silently failing for some users
+      // on some devices with no visible error, so surface enough to actually see why.
+      if (Date.now() - lastDiagLog > 2000) {
+        lastDiagLog = Date.now();
+        console.log("[SpeakWell face-detect diag]", {
+          tfBackend: (typeof faceapi !== "undefined" && faceapi.tf) ? faceapi.tf.getBackend() : "unknown",
+          videoWidth: liveVideo.videoWidth,
+          videoHeight: liveVideo.videoHeight,
+          videoReadyState: liveVideo.readyState,
+          faceFound: !!det,
+          detectionScore: det ? (det.detection ? det.detection.score : det.score) : null,
+        });
+      }
+
       ctx.clearRect(0, 0, overlay.width, overlay.height);
       let centered = false;
       if (det) {
@@ -472,7 +489,10 @@ function runFaceLoop() {
         }
       }
     } catch (e) {
-      /* detection hiccup, ignore this frame */
+      if (Date.now() - lastDiagLog > 2000) {
+        lastDiagLog = Date.now();
+        console.warn("[SpeakWell face-detect diag] detection threw:", e);
+      }
     }
     faceLoopHandle = requestAnimationFrame(tick);
   }
@@ -628,6 +648,12 @@ function stopRecording() {
 
   mediaRecorder.onstop = () => {
     const blob = new Blob(recordedChunks, { type: "video/webm" });
+    console.log("[SpeakWell recording diag]", {
+      chunkCount: recordedChunks.length,
+      chunkSizes: recordedChunks.map((c) => c.size),
+      totalBlobSize: blob.size,
+      mimeType: mediaRecorder.mimeType,
+    });
     const url = URL.createObjectURL(blob);
     liveVideo.style.display = "none";
     playbackVideo.style.display = "block";
@@ -892,6 +918,11 @@ function renderHistory() {
       }
       btn.textContent = "Loading...";
       const blob = await getVideoBlob(hist[idx].videoId);
+      console.log("[SpeakWell recording diag] playback fetch", {
+        videoId: hist[idx].videoId,
+        found: !!blob,
+        size: blob ? blob.size : null,
+      });
       if (!blob) {
         btn.textContent = "Recording unavailable";
         return;
