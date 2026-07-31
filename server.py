@@ -132,10 +132,24 @@ def rule_based_feedback(m):
             improvements.append(f"Low eye contact (~{eye}% facing camera). Try placing notes just above the camera.")
             tips.append("Tape a small dot next to the camera lens as a focal point while you practice.")
 
+    # "Engaged" only measures how often the detector read something other than neutral —
+    # it says nothing about whether that something was positive. Only praise this as a
+    # strength when the dominant expression is actually a positive/energized one;
+    # negative-coded dominants (sad, angry, fearful, disgusted) get a hedged note
+    # instead, since automated expression detection is also known to misread a relaxed,
+    # neutral face as mildly negative — false praise ("your sadness helps hold
+    # attention") is worse than no comment here.
+    POSITIVE_EXPRESSIONS = {"happy", "surprised"}
+    NEGATIVE_EXPRESSIONS = {"sad", "angry", "fearful", "disgusted"}
     if smile is not None and engaged is not None:
-        if engaged >= 40:
+        if engaged >= 40 and dominant_expr in POSITIVE_EXPRESSIONS:
             strengths.append(
                 f"Expressive delivery — your face was animated (mostly '{dominant_expr}') rather than flat, which helps hold attention."
+            )
+        elif engaged >= 40 and dominant_expr in NEGATIVE_EXPRESSIONS:
+            improvements.append(
+                f"Your expression often read as '{dominant_expr}' rather than neutral or positive. This may partly be a quirk of automated "
+                "expression detection (it can misread a relaxed face as negative), but worth a look: does your face seem tense on the recording?"
             )
         elif smile >= 25:
             strengths.append("You smiled naturally at points, which reads as warm and approachable.")
@@ -208,7 +222,7 @@ Words per minute: {m.get('wpm')}
 Filler words per 100 words: {m.get('fillerRatePer100')}
 Long pauses (>3s): {m.get('pauseCount')}
 Eye contact / facing camera: {m.get('eyeContactPct')}%
-Facial expression while speaking: dominant expression was "{m.get('dominantExpression')}", smiled ~{m.get('smilePct')}% of the time, expression was non-neutral (animated/engaged) ~{m.get('engagedExpressionPct')}% of the time
+Facial expression while speaking: dominant expression was "{m.get('dominantExpression')}", smiled ~{m.get('smilePct')}% of the time, expression was non-neutral (animated/engaged) ~{m.get('engagedExpressionPct')}% of the time. Note: only treat a non-neutral dominant expression as a strength if it's positive (happy/surprised) — if it's negative (sad/angry/fearful/disgusted), don't praise "animation" for its own sake; this is also a lightweight classifier that can misread a relaxed neutral face as mildly negative, so hedge rather than assert it confidently.
 Vocal tone variation: pitch ranged about {m.get('toneVariationSemitones')} semitones (mean pitch ~{m.get('meanPitchHz')}Hz) — low means monotone, high means erratic
 Volume variation: {m.get('volumeVariationDb')}dB range between loudest and softest voiced moments — low means flat/constant volume, higher means more dynamic (no upper penalty; wide deliberate swings are good)
 Volume level relative to this speaker's own ambient room/mic noise floor: {m.get('volumeAboveFloorDb')}dB above floor — higher means louder/more projected, this drives perceived energy
